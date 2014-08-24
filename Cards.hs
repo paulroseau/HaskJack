@@ -2,9 +2,8 @@ module Cards where
 
 -- Imports
 
-import Control.Monad.State
 import System.Random
-import Data.Tuple (fst, snd, swap)
+import Control.Monad.State
 
 -- Types
 data Card = Ace | Two | Three | Four |
@@ -17,18 +16,18 @@ type Hand = [Card]
 newtype Bet = Bet (Hand, Rational) deriving (Show)
 
 data Status = Surrender Rational | Bust Rational | BlackJack Rational |
-              Stand Bet | Double Bet | Continue Bet 
+              Stand Bet | Doubled Bet | Continue Bet 
               deriving (Show)
 
 type Move = Status -> [Either String (State StdGen Status)]
 
-newtype EitherT l m a = EitherT { runEitherT :: m (Either l a) }
+newtype MyEitherT l m a = MyEitherT { runMyEitherT :: m (Either l a) }
 
-instance Monad m => Monad (EitherT l m) where
-  return a = EitherT ( return $ Right a )
-  (EitherT x) >>= f = EitherT $ x >>= (
+instance Monad m => Monad (MyEitherT l m) where
+  return a = MyEitherT ( return $ Right a )
+  (MyEitherT x) >>= f = MyEitherT $ x >>= (
                               \either -> case either of
-                                Right a -> runEitherT $ f a
+                                Right a -> runMyEitherT $ f a
                                 Left l -> return $ Left l -- _ -> x makes the compiler confused with types
                               )
 
@@ -56,7 +55,7 @@ instance Monad m => Monad (MyStateT s m) where
 
 -- Card logic
 
-value :: Card -> [Rational]
+value :: Card -> [Int]
 value Ace = [1, 11]
 value Two = [2]
 value Three = [3]
