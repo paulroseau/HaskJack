@@ -16,6 +16,46 @@ type Hand = [Card]
 
 newtype Bet = Bet (Hand, Rational) deriving (Show)
 
+data Status = Surrender Rational | Bust Rational | BlackJack Rational |
+              Stand Bet | Double Bet | Continue Bet 
+              deriving (Show)
+
+type Move = Status -> [Either String (State StdGen Status)]
+
+newtype EitherT l m a = EitherT { runEitherT :: m (Either l a) }
+
+instance Monad m => Monad (EitherT l m) where
+  return a = EitherT ( return $ Right a )
+  (EitherT x) >>= f = EitherT $ x >>= (
+                              \either -> case either of
+                                Right a -> runEitherT $ f a
+                                Left l -> return $ Left l -- _ -> x makes the compiler confused with types
+                              )
+
+newtype MyStateT s m a = MyStateT { runMyStateT :: s -> m (a, s) }
+
+instance Monad m => Monad (MyStateT s m) where
+  return a = MyStateT (\s -> return (a, s))
+  (MyStateT x) >>= f = MyStateT $ (\s ->
+                                  (x s) >>= (\(a, s') -> runMyStateT (f a) $ s')
+                              )
+  -- In a way the state is inside the monad m, even though the type is
+  -- confusing. The state that matters is the one in (a, s), this is the one on
+  -- which you operate. The first state is just the argument, but if you think
+  -- of a monad that carries a state, it must have an initial state to start
+  -- with. The state will then live "inside" the monad.
+
+  -- Question : why is it not MyStateT { runMyStateT :: m (State s a) }?
+  -- I think you could easily write return and >>= that would compile for this
+  -- type. However, it doesn't make as much sense as the previous one because it
+  -- is not clear to see how you will pass the initial state as a parameter to
+  -- the inner (State s a). Think to the case where m is a list... Even if m is
+  -- the Maybe monad, you would have to unwrap your maybe to pass the initial
+  -- state to the stateful computation, and you lost your context...
+
+
+-- Card logic
+
 value :: Card -> [Rational]
 value Ace = [1, 11]
 value Two = [2]
@@ -34,6 +74,16 @@ value King = [10]
 deck :: [Card]
 deck = [Ace, Two, Three, Four, Five, Six, Seven, Eight, Nine, Ten, Jack, Queen, King]
 
+isBlackJack :: Hand -> Bool
+isBlackJack h = (length h == 2) && 
+                (any ((==) Ace) h) && 
+                (
+                  (any ((==) Ten) h) || 
+                  (any ((==) Jack) h) ||
+                  (any ((==) Queen) h) ||
+                  (any ((==) King) h)
+                )
+
 score :: Hand -> [Rational]
 score cards = foldr (\vs acc -> vs >>= (\v -> fmap (v+) acc)) [0] (map value cards)
 
@@ -45,20 +95,37 @@ drawCard = get >>=
            let (randomInt, newGenerator) = randomR (0, (length deck) - 1) generator
            in put newGenerator >> return (deck !! randomInt)) 
 
-
-stand :: Bet -> Bet
-stand = id
-
-hit :: Card -> Bet -> Bet
-hit c (Bet (cs, amount)) = Bet (c:cs, amount)
-
---double 
-
-
--- todo
--- "hit" is just a function which appends a new card to the player's hand
--- "stay" is just returning the player's hand
---
--- a player has a certain amount of money
--- a player is playing with a [(Hand, Amount)], each decision affects either the
--- hand or the amount, it's a list for doubling.
+-- surrender :: Move
+-- surrender Continue Bet (_, amount)  = [Right . state (\st -> (Surrender $ amount / 2, st))]
+-- surrender status = [Left "Error : cannot surrender after " ++ show status ++ "!"]
+-- 
+-- stand :: Move
+-- stand Double b = [Right $ Stand b]
+-- stand Continue b = [Right $ Stand b]
+-- stand status = Left "Error : cannot stand after " ++ show status ++ "!"
+-- 
+-- double :: Move
+-- double Continue (Bet (h, a)) = [Right . state (\st -> (Double $ Bet (h, 2*a), st))]
+-- double status = [Left "Error : cannot double after " ++ show status ++ "!"]
+-- 
+-- hit :: Move
+-- hit Double (Bet (h, a)) = 
+--     [Right $ 
+--        drawCard >>= 
+--        (\card -> let newHand = card:h in
+--          if (score newHand > 21)
+--            then return $ Bust a
+--            else return $ Stand (Bet (newHand, a))
+--        )]
+-- hit Continue (Bet (h, a)) =
+--     [Right $ 
+--        drawCard >>= 
+--        (\card -> let newHand = card:h in
+--          if (score newHand > 21)
+--            then return $ Bust a
+--            else return $ Continue (Bet (newHand, a))
+--        )]
+-- hit status = [Left "Error : cannot hit after " ++ show status ++ "!"]
+-- 
+-- split :: Move
+-- split = undefined
