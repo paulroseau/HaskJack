@@ -132,3 +132,25 @@ hit status = MyStateT (\gen -> Left $ "Error : cannot hit after " ++ show status
 
 -- split :: Move
 -- split = undefined
+
+-- Tests
+hand1 = [Ace, Two]
+hand2 = [Queen, King]
+hand3 = [Four, Three]
+
+bet1 = Bet (hand1, 5)
+bet2 = Bet (hand2, 5)
+bet3 = Bet (hand3, 5)
+
+initialStatus1 = Continue bet1
+initialStatus2 = Continue bet2
+initialStatus3 = Continue bet3
+
+result1 :: MyStateT StdGen (Either String) Status
+result1 = return initialStatus1 >>= surrender
+
+result2 :: MyStateT StdGen (Either String) Status
+result2 = return initialStatus2 >>= double >>= stand
+
+result3 :: MyStateT StdGen (Either String) Status
+result3 = return initialStatus3 >>= hit >>= hit >>= hit
