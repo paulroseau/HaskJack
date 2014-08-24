@@ -19,7 +19,6 @@ data Status = Surrender Rational | Bust Rational | BlackJack Rational |
               Stand Bet | Doubled Bet | Continue Bet 
               deriving (Show)
 
-type Move = Status -> [Either String (State StdGen Status)]
 
 newtype MyEitherT l m a = MyEitherT { runMyEitherT :: m (Either l a) }
 
@@ -52,6 +51,8 @@ instance Monad m => Monad (MyStateT s m) where
   -- the Maybe monad, you would have to unwrap your maybe to pass the initial
   -- state to the stateful computation, and you lost your context...
 
+-- type Move = Status -> [Either String (State StdGen Status)]
+type Move = Status -> MyStateT StdGen (Either String) Status
 
 -- Card logic
 
@@ -83,48 +84,51 @@ isBlackJack h = (length h == 2) &&
                   (any ((==) King) h)
                 )
 
-score :: Hand -> [Rational]
-score cards = foldr (\vs acc -> vs >>= (\v -> fmap (v+) acc)) [0] (map value cards)
+score :: Hand -> Int
+score cards = case filter (<= 21) $ potentialScores of
+                filteredScores@(_:_) -> maximum filteredScores
+                _                    -> minimum potentialScores
+              where potentialScores = foldr (\vs acc -> vs >>= (\v -> fmap (v+) acc)) [0] (map value cards)
 
--- Game logic
+-- Move logic
 
-drawCard :: State StdGen Card
-drawCard = get >>= 
-           (\generator -> 
-           let (randomInt, newGenerator) = randomR (0, (length deck) - 1) generator
-           in put newGenerator >> return (deck !! randomInt)) 
+drawCard :: StdGen -> (Card, StdGen)
+drawCard generator = (deck !! randomInt, newGenerator)
+                    where (randomInt, newGenerator) = randomR (0, (length deck) - 1) generator
 
--- surrender :: Move
--- surrender Continue Bet (_, amount)  = [Right . state (\st -> (Surrender $ amount / 2, st))]
--- surrender status = [Left "Error : cannot surrender after " ++ show status ++ "!"]
--- 
--- stand :: Move
--- stand Double b = [Right $ Stand b]
--- stand Continue b = [Right $ Stand b]
--- stand status = Left "Error : cannot stand after " ++ show status ++ "!"
--- 
--- double :: Move
--- double Continue (Bet (h, a)) = [Right . state (\st -> (Double $ Bet (h, 2*a), st))]
--- double status = [Left "Error : cannot double after " ++ show status ++ "!"]
--- 
--- hit :: Move
--- hit Double (Bet (h, a)) = 
---     [Right $ 
---        drawCard >>= 
---        (\card -> let newHand = card:h in
---          if (score newHand > 21)
---            then return $ Bust a
---            else return $ Stand (Bet (newHand, a))
---        )]
--- hit Continue (Bet (h, a)) =
---     [Right $ 
---        drawCard >>= 
---        (\card -> let newHand = card:h in
---          if (score newHand > 21)
---            then return $ Bust a
---            else return $ Continue (Bet (newHand, a))
---        )]
--- hit status = [Left "Error : cannot hit after " ++ show status ++ "!"]
--- 
+surrender :: Move
+surrender (Continue (Bet (_, amount)))  = MyStateT (\gen -> Right (Surrender $ amount / 2, gen))
+surrender status = MyStateT (\gen -> Left $ "Error : cannot surrender after " ++ show status ++ "!")
+
+stand :: Move
+stand (Doubled b) = MyStateT (\gen -> Right (Stand b, gen))
+stand (Continue b) = MyStateT (\gen -> Right (Stand b, gen))
+stand status = MyStateT (\gen -> Left $ "Error : cannot stand after " ++ show status ++ "!")
+
+double :: Move
+double (Continue (Bet (h, a))) = MyStateT (\gen -> Right (Doubled $ Bet (h, 2*a), gen))
+double status = MyStateT (\gen -> Left $ "Error : cannot double after " ++ show status ++ "!")
+
+hit :: Move
+hit (Doubled (Bet (h, a))) = 
+  MyStateT (\gen -> 
+    let (newCard, newGenerator) = drawCard gen in
+      let newHand = newCard:h in
+        Right 
+          (if (score newHand > 21)
+            then Bust a
+            else Stand (Bet (newHand, a))
+          , newGenerator))
+hit (Continue (Bet (h, a))) = 
+  MyStateT (\gen -> 
+    let (newCard, newGenerator) = drawCard gen in
+      let newHand = newCard:h in
+        Right 
+          (if (score newHand > 21)
+            then Bust a
+            else Continue (Bet (newHand, a))
+          , newGenerator))
+hit status = MyStateT (\gen -> Left $ "Error : cannot hit after " ++ show status ++ "!")
+
 -- split :: Move
 -- split = undefined
