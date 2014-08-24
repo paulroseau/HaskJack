@@ -1,19 +1,22 @@
 module Cards where
 
+-- Imports
+
 import Control.Monad.State
 import System.Random
 import Data.Tuple (fst, snd, swap)
 
+-- Types
 data Card = Ace | Two | Three | Four |
             Five | Six | Seven | Eight |
             Nine | Ten | Jack | Queen | King
-            deriving (Show)
+            deriving (Show, Eq)
 
 type Hand = [Card]
 
-newtype Bet = Bet (Hand, Int) deriving (Show)
+newtype Bet = Bet (Hand, Rational) deriving (Show)
 
-value :: Card -> [Int]
+value :: Card -> [Rational]
 value Ace = [1, 11]
 value Two = [2]
 value Three = [3]
@@ -31,13 +34,15 @@ value King = [10]
 deck :: [Card]
 deck = [Ace, Two, Three, Four, Five, Six, Seven, Eight, Nine, Ten, Jack, Queen, King]
 
-score :: Hand -> [Int]
+score :: Hand -> [Rational]
 score cards = foldr (\vs acc -> vs >>= (\v -> fmap (v+) acc)) [0] (map value cards)
+
+-- Game logic
 
 drawCard :: State StdGen Card
 drawCard = get >>= 
            (\generator -> 
-           let (randomInt, newGenerator) = randomR (0, (lenght deck) - 1) generator
+           let (randomInt, newGenerator) = randomR (0, (length deck) - 1) generator
            in put newGenerator >> return (deck !! randomInt)) 
 
 
