@@ -38,8 +38,8 @@ newtype MyStateT s m a = MyStateT { runMyStateT :: s -> m (a, s) }
 instance Monad m => Monad (MyStateT s m) where
   return a = MyStateT (\s -> return (a, s))
   (MyStateT x) >>= f = MyStateT $ (\s ->
-                                  (x s) >>= (\(a, s') -> runMyStateT (f a) $ s')
-                              )
+                                  (x s) >>= (\(a, s') -> 
+                                            runMyStateT (f a) $ s'))
 -----------------------THINKING OUTLOUD-------------------------------
   -- In a way the state is inside the monad m, even though the type is
   -- confusing. The state that matters is the one in (a, s), this is the one on
