@@ -2,8 +2,11 @@ module Cards where
 
 -- Imports
 
-import System.Random
 import Control.Monad.State
+import System.Random (mkStdGen
+                     , randomR
+                     , random
+                     , StdGen)
 
 -- Types
 data Card = Ace | Two | Three | Four |
@@ -66,7 +69,10 @@ instance Monad m => Monad (MyStateT s m) where
 -- Thinking that (a, s) will be injected in m1 is not a good
 -- vision of things, even though it is actually the case in order to construct
 -- the function contained in MyStateT. Actually m1 is transformed by MyStateT, and the
--- resulting monad will be injected a. However, MyEitherT [Either l (x, y)] is indeed a monad of base type (x, y), but since this is transformed by a MyStateT, the y is not to be considered as a part of the underlying type of the monad.
+-- resulting monad will be injected a. However, MyEitherT [Either l (x, y)] is
+-- indeed a monad of base type (x, y), but since this is transformed by a
+-- MyStateT, the y is not to be considered as a part of the underlying type of
+-- the monad.
 -- Thus the target type is actually :
 -- MyStateT StdGen (MyEitherT String []) Status
 ----------------------------------------------------------------------
@@ -112,8 +118,8 @@ score cards = case filter (<= 21) $ potentialScores of
 -- Move logic
 
 drawCard :: StdGen -> (Card, StdGen)
-drawCard generator = (deck !! randomInt, newGenerator)
-                    where (randomInt, newGenerator) = randomR (0, (length deck) - 1) generator
+drawCard gen = (deck !! randomInt, gen')
+                    where (randomInt, gen') = randomR (0, (length deck) - 1) gen
 
 surrender :: Move
 surrender (Continue (Bet (_, amount)))  = MyStateT (\gen -> MyEitherT [Right (Surrender $ amount / 2, gen)])
@@ -131,22 +137,20 @@ double status = MyStateT (\gen -> MyEitherT [Left $ "Error : cannot double after
 hit :: Move
 hit (Doubled (Bet (h, a))) = 
   MyStateT (\gen -> 
-    let (newCard, newGenerator) = drawCard gen in
-      let newHand = newCard:h in
-        MyEitherT [Right 
-          (if (score newHand > 21)
-            then Bust a
-            else Stand (Bet (newHand, a))
-          , newGenerator)])
+    let (newCard, gen') = drawCard gen 
+        newHand = newCard:h 
+    in MyEitherT [Right ( if (score newHand > 21)
+                            then Bust a
+                            else Stand (Bet (newHand, a))
+                        , gen')])
 hit (Continue (Bet (h, a))) = 
   MyStateT (\gen -> 
-    let (newCard, newGenerator) = drawCard gen in
-      let newHand = newCard:h in
-        MyEitherT [Right 
-          (if (score newHand > 21)
-            then Bust a
-            else Continue (Bet (newHand, a))
-          , newGenerator)])
+    let (newCard, gen') = drawCard gen 
+        newHand = newCard:h 
+    in MyEitherT [Right ( if (score newHand > 21)
+                            then Bust a
+                            else Continue (Bet (newHand, a))
+                        , gen')])
 hit status = MyStateT (\gen -> MyEitherT [Left $ "Error : cannot hit after " ++ show status ++ "!"])
 
 -- split :: Move
