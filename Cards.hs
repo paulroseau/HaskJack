@@ -37,6 +37,7 @@ instance Monad m => Monad (MyStateT s m) where
   (MyStateT x) >>= f = MyStateT $ (\s ->
                                   (x s) >>= (\(a, s') -> runMyStateT (f a) $ s')
                               )
+-----------------------THINKING OUTLOUD-------------------------------
   -- In a way the state is inside the monad m, even though the type is
   -- confusing. The state that matters is the one in (a, s), this is the one on
   -- which you operate. The first state is just the argument, but if you think
@@ -50,8 +51,26 @@ instance Monad m => Monad (MyStateT s m) where
   -- the inner (State s a). Think to the case where m is a list... Even if m is
   -- the Maybe monad, you would have to unwrap your maybe to pass the initial
   -- state to the stateful computation, and you lost your context...
+----------------------------------------------------------------------
 
--- type Move = Status -> [Either String (State StdGen Status)]
+-----------------------THINKING OUTLOUD-------------------------------
+-- Target type : [Either String (State StdGen a)] where a = Status
+-- Transformers :
+-- MyStateT s m1 a = MyStateT { runMyStateT :: s -> m1 (a, s) }
+-- MyEitherT l m2 a = MyEitherT { runMyEitherT :: m2 (Either l a) }
+-- Rk : the inner most monad has the outer most constructor, since a transformer
+-- modifies the inside of a monad. One should read the transformers from right
+-- to left.
+-- We shoud have :
+--  m1 = MyEitherT String [] , which is of kind * -> * 
+-- Thinking that (a, s) will be injected in m1 is not a good
+-- vision of things, even though it is actually the case in order to construct
+-- the function contained in MyStateT. Actually m1 is transformed by MyStateT, and the
+-- resulting monad will be injected a. However, MyEitherT [Either l (x, y)] is indeed a monad of base type (x, y), but since this is transformed by a MyStateT, the y is not to be considered as a part of the underlying type of the monad.
+-- Thus the target type is actually :
+-- MyStateT StdGen (MyEitherT String []) Status
+----------------------------------------------------------------------
+
 type Move = Status -> MyStateT StdGen (Either String) Status
 
 -- Card logic
