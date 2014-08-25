@@ -71,7 +71,7 @@ instance Monad m => Monad (MyStateT s m) where
 -- MyStateT StdGen (MyEitherT String []) Status
 ----------------------------------------------------------------------
 
-type Move = Status -> MyStateT StdGen (Either String) Status
+type Move = Status -> MyStateT StdGen (MyEitherT String []) Status
 
 -- Card logic
 
@@ -116,38 +116,38 @@ drawCard generator = (deck !! randomInt, newGenerator)
                     where (randomInt, newGenerator) = randomR (0, (length deck) - 1) generator
 
 surrender :: Move
-surrender (Continue (Bet (_, amount)))  = MyStateT (\gen -> Right (Surrender $ amount / 2, gen))
-surrender status = MyStateT (\gen -> Left $ "Error : cannot surrender after " ++ show status ++ "!")
+surrender (Continue (Bet (_, amount)))  = MyStateT (\gen -> MyEitherT [Right (Surrender $ amount / 2, gen)])
+surrender status = MyStateT (\gen -> MyEitherT [Left $ "Error : cannot surrender after " ++ show status ++ "!"])
 
 stand :: Move
-stand (Doubled b) = MyStateT (\gen -> Right (Stand b, gen))
-stand (Continue b) = MyStateT (\gen -> Right (Stand b, gen))
-stand status = MyStateT (\gen -> Left $ "Error : cannot stand after " ++ show status ++ "!")
+stand (Doubled b) = MyStateT (\gen -> MyEitherT [Right (Stand b, gen)])
+stand (Continue b) = MyStateT (\gen -> MyEitherT [Right (Stand b, gen)])
+stand status = MyStateT (\gen -> MyEitherT [Left $ "Error : cannot stand after " ++ show status ++ "!"])
 
 double :: Move
-double (Continue (Bet (h, a))) = MyStateT (\gen -> Right (Doubled $ Bet (h, 2*a), gen))
-double status = MyStateT (\gen -> Left $ "Error : cannot double after " ++ show status ++ "!")
+double (Continue (Bet (h, a))) = MyStateT (\gen -> MyEitherT [Right (Doubled $ Bet (h, 2*a), gen)])
+double status = MyStateT (\gen -> MyEitherT [Left $ "Error : cannot double after " ++ show status ++ "!"])
 
 hit :: Move
 hit (Doubled (Bet (h, a))) = 
   MyStateT (\gen -> 
     let (newCard, newGenerator) = drawCard gen in
       let newHand = newCard:h in
-        Right 
+        MyEitherT [Right 
           (if (score newHand > 21)
             then Bust a
             else Stand (Bet (newHand, a))
-          , newGenerator))
+          , newGenerator)])
 hit (Continue (Bet (h, a))) = 
   MyStateT (\gen -> 
     let (newCard, newGenerator) = drawCard gen in
       let newHand = newCard:h in
-        Right 
+        MyEitherT [Right 
           (if (score newHand > 21)
             then Bust a
             else Continue (Bet (newHand, a))
-          , newGenerator))
-hit status = MyStateT (\gen -> Left $ "Error : cannot hit after " ++ show status ++ "!")
+          , newGenerator)])
+hit status = MyStateT (\gen -> MyEitherT [Left $ "Error : cannot hit after " ++ show status ++ "!"])
 
 -- split :: Move
 -- split = undefined
@@ -165,11 +165,11 @@ initialStatus1 = Continue bet1
 initialStatus2 = Continue bet2
 initialStatus3 = Continue bet3
 
-result1 :: MyStateT StdGen (Either String) Status
+result1 :: MyStateT StdGen (MyEitherT String []) Status
 result1 = return initialStatus1 >>= surrender
 
-result2 :: MyStateT StdGen (Either String) Status
+result2 :: MyStateT StdGen (MyEitherT String []) Status
 result2 = return initialStatus2 >>= double >>= stand
 
-result3 :: MyStateT StdGen (Either String) Status
+result3 :: MyStateT StdGen (MyEitherT String []) Status
 result3 = return initialStatus3 >>= hit >>= hit >>= hit
