@@ -153,21 +153,33 @@ hit (Continue (Bet (h, a))) =
                         , gen')])
 hit status = MyStateT (\gen -> MyEitherT [Left $ "Error : cannot hit after " ++ show status ++ "!"])
 
--- split :: Move
--- split = undefined
+split :: Move
+split (Continue (Bet ((c1:c2:[]), a)))
+  | c1 == c2 = MyStateT (\gen -> 
+                            let (newC1, gen') = drawCard gen
+                                (newC2, gen'') = drawCard gen'
+                                (seed1, gen''') = random gen''
+                                (seed2, _) = random gen'''
+                            in MyEitherT [Right (Continue $ Bet ([c1, newC1], a), mkStdGen seed1),
+                                          Right (Continue $ Bet ([c2, newC2], a), mkStdGen seed2)])
+  | otherwise = MyStateT (\gen -> MyEitherT [Left $ "Error : hand " ++ show [c1, c2] ++ " is not a pair!"])
+split status = MyStateT (\gen -> MyEitherT [Left $ "Error : cannot split after " ++ show status ++ "!"])
 
 -- Tests
 hand1 = [Ace, Two]
 hand2 = [Queen, King]
 hand3 = [Four, Three]
+hand4 = [King, King]
 
 bet1 = Bet (hand1, 5)
 bet2 = Bet (hand2, 5)
 bet3 = Bet (hand3, 5)
+bet4 = Bet (hand4, 5)
 
 initialStatus1 = Continue bet1
 initialStatus2 = Continue bet2
 initialStatus3 = Continue bet3
+initialStatus4 = Continue bet4
 
 result1 :: MyStateT StdGen (MyEitherT String []) Status
 result1 = return initialStatus1 >>= surrender
@@ -177,3 +189,6 @@ result2 = return initialStatus2 >>= double >>= stand
 
 result3 :: MyStateT StdGen (MyEitherT String []) Status
 result3 = return initialStatus3 >>= hit >>= hit >>= hit
+
+result4 :: MyStateT StdGen (MyEitherT String []) Status
+result4 = return initialStatus4 >>= split 
