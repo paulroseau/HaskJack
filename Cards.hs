@@ -37,6 +37,7 @@ instance Monad m => Monad (MyStateT s m) where
   (MyStateT x) >>= f = MyStateT $ (\s ->
                                   (x s) >>= (\(a, s') -> runMyStateT (f a) $ s')
                               )
+-----------------------THINKING OUTLOUD-------------------------------
   -- In a way the state is inside the monad m, even though the type is
   -- confusing. The state that matters is the one in (a, s), this is the one on
   -- which you operate. The first state is just the argument, but if you think
@@ -50,8 +51,20 @@ instance Monad m => Monad (MyStateT s m) where
   -- the inner (State s a). Think to the case where m is a list... Even if m is
   -- the Maybe monad, you would have to unwrap your maybe to pass the initial
   -- state to the stateful computation, and you lost your context...
+----------------------------------------------------------------------
 
--- type Move = Status -> [Either String (State StdGen Status)]
+-----------------------THINKING OUTLOUD-------------------------------
+-- Target type : [Either String (State StdGen a)] where a = Status
+-- Transformers :
+-- MyStateT s m1 a = MyStateT { runMyStateT :: s -> m1 (a, s) }
+-- MyEitherT l m2 a = MyEitherT { runMyEitherT :: m2 (Either l a) }
+-- We shoud have :
+--  m1 = MyEitherT String [] , which is of kind * -> * 
+--  (kind of like [Either String . ]) in which the (a, s) will be injected.
+-- Thus the target type is actually :
+-- MyStateT StdGen (MyEitherT String []) Status
+----------------------------------------------------------------------
+
 type Move = Status -> MyStateT StdGen (Either String) Status
 
 -- Card logic
