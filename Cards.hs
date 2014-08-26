@@ -41,6 +41,7 @@ instance Monad m => Monad (MyStateT s m) where
   (MyStateT x) >>= f = MyStateT $ (\s ->
                                   (x s) >>= (\(a, s') -> 
                                             runMyStateT (f a) $ s'))
+
 -----------------------THINKING OUTLOUD-------------------------------
   -- In a way the state is inside the monad m, even though the type is
   -- confusing. The state that matters is the one in (a, s), this is the one on
@@ -172,6 +173,27 @@ split (Start (Bet ((c1:c2:[]), a)))
   | otherwise = MyStateT (\gen -> MyEitherT [Left $ "Error : hand " ++ show [c1, c2] ++ " is not a pair!"])
 split status = MyStateT (\gen -> MyEitherT [Left $ "Error : cannot split after " ++ show status ++ "!"])
 
+-- Aliases
+
+h :: Move
+h = hit
+s :: Move
+s = stand
+p :: Move
+p = split
+dh :: Move
+dh st@(Start _) = double st
+dh st = hit st
+ds :: Move
+ds st@(Start _) = double st
+ds st = stand st
+rh :: Move
+rh st@(Start _) = surrender st
+rh st = hit st
+rs :: Move
+rs st@(Start _) = surrender st
+rs st = stand st
+
 -- Strategies
 
 type Strategy = Array (Int, Card) Move
@@ -220,26 +242,14 @@ splitHandBasicStrategy = array ((2, 11), (2, 11)) [
                           ((10, 2), s), ((10, 3), s), ((10, 4), s), ((10, 5), s), ((10, 6), s), ((10, 7), s), ((10, 8), s), ((10, 9), s), ((10, 10), s), ((10, 11), s), 
                           ((11, 2), p), ((11, 3), p), ((11, 4), p), ((11, 5), p), ((11, 6), p), ((11, 7), p), ((11, 8), p), ((11, 9), p), ((11, 10), p), ((11, 11), p)] 
 
-  -- Aliases
-
-h :: Move
-h = hit
-s :: Move
-s = stand
-p :: Move
-p = split
-dh :: Move
-dh st@(Start _) = double st
-dh st = hit st
-ds :: Move
-ds st@(Start _) = double st
-ds st = stand st
-rh :: Move
-rh st@(Start _) = surrender st
-rh st = hit st
-rs :: Move
-rs st@(Start _) = surrender st
-rs st = stand st
+-- play :: Status -> je sais pas quoi encore
+-- play Bust a = -a
+-- play BlackJack a = 6/5 * a
+-- play Surrender a = -a
+-- play Start b = if isPair then split else if isSoft the soft else hard
+-- play Continue = if isSoft then soft else hard
+-- play Doubled = if isSoft then soft else hard
+-- play Stand => make the bank play and let's see
 
 -- Tests
 hand1 = [Ace, Two]
