@@ -19,7 +19,7 @@ type Hand = [Card]
 newtype Bet = Bet (Hand, Rational) deriving (Show)
 
 data Status = Surrender Rational | Bust Rational | BlackJack Rational |
-              Stand Bet | Doubled Bet | Continue Bet 
+              Start Bet | Stand Bet | Doubled Bet | Continue Bet 
               deriving (Show)
 
 
@@ -122,46 +122,42 @@ drawCard gen = (deck !! randomInt, gen')
                     where (randomInt, gen') = randomR (0, (length deck) - 1) gen
 
 surrender :: Move
-surrender (Continue (Bet (_, amount)))  = MyStateT (\gen -> MyEitherT [Right (Surrender $ amount / 2, gen)])
+surrender (Start (Bet (_, amount)))  = MyStateT (\gen -> MyEitherT [Right (Surrender $ amount / 2, gen)])
 surrender status = MyStateT (\gen -> MyEitherT [Left $ "Error : cannot surrender after " ++ show status ++ "!"])
 
 stand :: Move
+stand (Start b) = MyStateT (\gen -> MyEitherT [Right (Stand b, gen)])
 stand (Doubled b) = MyStateT (\gen -> MyEitherT [Right (Stand b, gen)])
 stand (Continue b) = MyStateT (\gen -> MyEitherT [Right (Stand b, gen)])
 stand status = MyStateT (\gen -> MyEitherT [Left $ "Error : cannot stand after " ++ show status ++ "!"])
 
 double :: Move
-double (Continue (Bet (h, a))) = MyStateT (\gen -> MyEitherT [Right (Doubled $ Bet (h, 2*a), gen)])
+double (Start (Bet (h, a))) = MyStateT (\gen -> MyEitherT [Right (Doubled $ Bet (h, 2*a), gen)])
 double status = MyStateT (\gen -> MyEitherT [Left $ "Error : cannot double after " ++ show status ++ "!"])
 
 hit :: Move
-hit (Doubled (Bet (h, a))) = 
-  MyStateT (\gen -> 
-    let (newCard, gen') = drawCard gen 
-        newHand = newCard:h 
-    in MyEitherT [Right ( if (score newHand > 21)
-                            then Bust a
-                            else Stand (Bet (newHand, a))
-                        , gen')])
-hit (Continue (Bet (h, a))) = 
-  MyStateT (\gen -> 
-    let (newCard, gen') = drawCard gen 
-        newHand = newCard:h 
-    in MyEitherT [Right ( if (score newHand > 21)
-                            then Bust a
-                            else Continue (Bet (newHand, a))
-                        , gen')])
+hit (Doubled b) = MyStateT $ drawCardAnd Stand b
+hit (Start b) = MyStateT $ drawCardAnd Continue b
+hit (Continue b) = MyStateT $ drawCardAnd Continue b
 hit status = MyStateT (\gen -> MyEitherT [Left $ "Error : cannot hit after " ++ show status ++ "!"])
 
+drawCardAnd :: (Bet -> Status) -> Bet -> (StdGen -> MyEitherT String [] (Status, StdGen))
+drawCardAnd status (Bet (h, a)) = (\gen -> let (newCard, gen') = drawCard gen 
+                                               newHand = newCard:h 
+                                           in MyEitherT [Right ( if (bestScore newHand > 21)
+                                                                   then Bust a
+                                                                   else status (Bet (newHand, a))
+                                                                , gen')])
+
 split :: Move
-split (Continue (Bet ((c1:c2:[]), a)))
+split (Start (Bet ((c1:c2:[]), a)))
   | c1 == c2 = MyStateT (\gen -> 
                             let (newC1, gen') = drawCard gen
                                 (newC2, gen'') = drawCard gen'
                                 (seed1, gen''') = random gen''
                                 (seed2, _) = random gen'''
-                            in MyEitherT [Right (Continue $ Bet ([c1, newC1], a), mkStdGen seed1),
-                                          Right (Continue $ Bet ([c2, newC2], a), mkStdGen seed2)])
+                            in MyEitherT [Right (Start $ Bet ([c1, newC1], a), mkStdGen seed1),
+                                          Right (Start $ Bet ([c2, newC2], a), mkStdGen seed2)])
   | otherwise = MyStateT (\gen -> MyEitherT [Left $ "Error : hand " ++ show [c1, c2] ++ " is not a pair!"])
 split status = MyStateT (\gen -> MyEitherT [Left $ "Error : cannot split after " ++ show status ++ "!"])
 
@@ -176,10 +172,10 @@ bet2 = Bet (hand2, 5)
 bet3 = Bet (hand3, 5)
 bet4 = Bet (hand4, 5)
 
-initialStatus1 = Continue bet1
-initialStatus2 = Continue bet2
-initialStatus3 = Continue bet3
-initialStatus4 = Continue bet4
+initialStatus1 = Start bet1
+initialStatus2 = Start bet2
+initialStatus3 = Start bet3
+initialStatus4 = Start bet4
 
 result1 :: MyStateT StdGen (MyEitherT String []) Status
 result1 = return initialStatus1 >>= surrender
