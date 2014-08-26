@@ -109,11 +109,21 @@ isBlackJack h = (length h == 2) &&
                   (any ((==) King) h)
                 )
 
-score :: Hand -> Int
-score cards = case filter (<= 21) $ potentialScores of
-                filteredScores@(_:_) -> maximum filteredScores
+isSoftHand :: Hand -> Bool
+isSoftHand cards = (length . scores $ cards) >= 2
+
+isPair :: Hand -> Bool
+isPair (c1:c2:[]) = c1 == c2
+isPair _ = False
+
+bestScore :: Hand -> Int
+bestScore cards = case filter (<= 21) $ potentialScores of
+                okScores@(_:_) -> maximum okScores
                 _                    -> minimum potentialScores
-              where potentialScores = foldr (\vs acc -> vs >>= (\v -> fmap (v+) acc)) [0] (map value cards)
+              where potentialScores = scores cards
+
+scores :: Hand -> [Int]
+scores cards = foldr (\vs acc -> vs >>= (\v -> fmap (v+) acc)) [0] (map value cards) 
 
 -- Move logic
 
