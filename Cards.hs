@@ -127,54 +127,52 @@ scores cards = foldr (\vs acc -> vs >>= (\v -> fmap (v+) acc)) [0] (map value ca
 
 -- Move logic
 
--- todo : Move should be of type 
--- Status -> MyEitherT String (State (StdGen, Rational) [Status])
-type Move = Status -> Either String (State (StdGen, Rational) [Status])
+type Move = Status -> MyStateT (StdGen, Rational) (Either String) [Status]
 
 drawCard :: StdGen -> (Card, StdGen)
 drawCard gen = (deck !! randomInt, gen')
                     where (randomInt, gen') = randomR (0, (length deck) - 1) gen
 
 surrender :: Move
-surrender (Start (Bet (_, amount)))  = Right $ state (\(gen, balance) -> ([Surrender $ amount / 2], (gen, balance + amount / 2))
-surrender status = Left $ ("Error : cannot surrender after " ++ show status ++ "!")
+surrender (Start (Bet (_, amount)))  = MyStateT (\(gen, balance) -> Right $ ([Surrender $ amount / 2], (gen, balance + amount / 2)))
+surrender status = MyStateT (\(gen, balance) -> Left ("Error : cannot surrender after " ++ show status ++ "!"))
 
 stand :: Move
-stand (Start b) = Right $ state (\(gen, balance) -> ([Stand b], (gen, balance))
-stand (Doubled b) = Right $ state (\(gen, balance) -> ([Stand b], (gen, balance))
-stand (Continue b) = Right $ state (\(gen, balance) -> ([Stand b], (gen, balance))
-stand status = Left $ ("Error : cannot stand after " ++ show status ++ "!")
+stand (Start b) = MyStateT (\(gen, balance) -> Right $ ([Stand b], (gen, balance)))
+stand (Doubled b) = MyStateT (\(gen, balance) -> Right $ ([Stand b], (gen, balance)))
+stand (Continue b) = MyStateT (\(gen, balance) -> Right $ ([Stand b], (gen, balance)))
+stand status = MyStateT (\(gen, balance) -> Left ("Error : cannot stand after " ++ show status ++ "!"))
 
 double :: Move
-double (Start (Bet (h, a))) = Right $ state (\(gen, balance) -> 
-                                  if (balance - a > 0)
-                                    then ([Doubled $ Bet (h, 2*a)], (gen, balance - a))
-                                    else ([Continue $ Bet (h, a)], (gen, balance))
-double status = Left $ ("Error : cannot double after " ++ show status ++ "!")
+double (Start (Bet (h, a))) = MyStateT (\(gen, balance) -> 
+                                  if (balance - a >= 0)
+                                    then Right $ ([Doubled $ Bet (h, 2*a)], (gen, balance - a))
+                                    else Right $ ([Continue $ Bet (h, a)], (gen, balance)))
+double status = MyStateT (\(gen, balance) -> Left ("Error : cannot double after " ++ show status ++ "!"))
 
 hit :: Move
 hit (Doubled b) = drawCardAnd Stand b
 hit (Start b) = drawCardAnd Continue b
 hit (Continue b) = drawCardAnd Continue b
-hit status = Left $ ("Error : cannot hit after " ++ show status ++ "!")
+hit status = MyStateT (\(gen, balance) -> Left ("Error : cannot hit after " ++ show status ++ "!"))
 
-drawCardAnd :: (Bet -> Status) -> Bet -> Either String (State (StdGen, Rational) [Status])
-drawCardAnd status (Bet (h, a)) = Right $ state (\(gen, balance) -> 
+drawCardAnd :: (Bet -> Status) -> Bet -> MyStateT (StdGen, Rational) (Either String) [Status]
+drawCardAnd status (Bet (h, a)) = MyStateT (\(gen, balance) -> 
                                                       let (newCard, gen') = drawCard gen 
                                                           newHand = newCard:h 
-                                            in ( [if (bestScore newHand > 21) then Bust a else status (Bet (newHand, a))]
-                                                 , (gen', balance) ) 
+                                            in Right $ ([if (bestScore newHand > 21) then Bust a else status (Bet (newHand, a))]
+                                                       , (gen', balance))) 
 
 split :: Move
 split (Start (Bet ((c1:c2:[]), a)))
-  | c1 == c2 = Right $ state (\(gen, balance) -> 
-                                  if (balance - a > 0)
+  | c1 == c2 = MyStateT (\(gen, balance) -> 
+                                  if (balance - a >= 0)
                                     then let (newC1, gen') = drawCard gen
                                              (newC2, gen'') = drawCard gen'
-                                         in ([Start $ Bet ([c1, newC1], a), Start $ Bet ([c2, newC2], a)], (gen'', balance - a))
-                                    else (Continue $ Bet ([c1, c2], a), (gen, balance))
-  | otherwise = Left $ ("Error : hand " ++ show [c1, c2] ++ " is not a pair!")
-split status = Left $ ("Error : cannot split after " ++ show status ++ "!")
+                                         in Right $ ([Start $ Bet ([c1, newC1], a), Start $ Bet ([c2, newC2], a)], (gen'', balance - a))
+                                    else Right $ ([Continue $ Bet ([c1, c2], a)], (gen, balance)))
+  | otherwise = MyStateT (\(gen, balance) -> Left ("Error : hand " ++ show [c1, c2] ++ " is not a pair!"))
+split status = MyStateT (\(gen, balance) -> Left ("Error : cannot split after " ++ show status ++ "!"))
 
 -- Aliases
 
@@ -201,6 +199,32 @@ rs st = stand st
 
 type Strategy = Array (Int, Card) Move
 
+playBasicStrategy :: Card -> Status -> MyStateT (StdGen, Rational) (Either String) [Status]
+playBasicStrategy _ s@(Bust _) = return [s]
+playBasicStrategy _ s@(BlackJack _) = return [s]
+playBasicStrategy _ s@(Surrender _) = return [s]
+playBasicStrategy _ s@(Stand _) = return [s]
+playBasicStrategy upCard s@(Doubled (Bet (h, a))) = lookupSimple h upCard s >>= playBasicStrategy' upCard
+playBasicStrategy upCard s@(Continue (Bet (h, a))) = lookupSimple h upCard s >>= playBasicStrategy' upCard
+playBasicStrategy upCard s@(Start (Bet (h, a)))  = firstMove s >>= playBasicStrategy' upCard
+                                                   where firstMove = if isPair h 
+                                                                       then lookupSplit h upCard
+                                                                       else lookupSimple h upCard 
+
+playBasicStrategy' :: Card -> [Status] -> MyStateT (StdGen, Rational) (Either String) [Status]
+playBasicStrategy' upCard xs = foldr f (MyStateT (\(gen, stake) -> Right $ ([], (gen, stake)))) xs
+                        where f x acc = playBasicStrategy upCard x >>= (\xList -> acc >>= (\accList -> return (xList ++ accList)))
+                                                                                      
+lookupSimple :: Hand -> Card -> Move
+lookupSimple h c = (if isSoftHand h 
+                     then softHandBasicStrategy 
+                     else hardHandBasicStrategy) ! (bestScore h, maximum . scores $ [c])
+
+-- TODO think about the return type because head is unsafe
+lookupSplit :: Hand -> Card -> Move
+lookupSplit h c = splitHandBasicStrategy ! (maximum . scores $ [head h], maximum . scores $ [c])
+
+hardHandBasicStrategy  :: Array (Int, Int) Move
 hardHandBasicStrategy = array ((4, 2), (21, 11)) [
                           ((4, 2), h), ((4, 3), h), ((4, 4), h), ((4, 5), h), ((4, 6), h), ((4, 7), h), ((4, 8), h), ((4, 9), h), ((4, 10), h), ((4, 11), h), 
                           ((5, 2), h), ((5, 3), h), ((5, 4), h), ((5, 5), h), ((5, 6), h), ((5, 7), h), ((5, 8), h), ((5, 9), h), ((5, 10), h), ((5, 11), h), 
@@ -221,7 +245,8 @@ hardHandBasicStrategy = array ((4, 2), (21, 11)) [
                           ((20, 2), s), ((20, 3), s), ((20, 4), s), ((20, 5), s), ((20, 6), s), ((20, 7), s), ((20, 8), s), ((20, 9), s), ((20, 10), s), ((20, 11), s), 
                           ((21, 2), s), ((21, 3), s), ((21, 4), s), ((21, 5), s), ((21, 6), s), ((21, 7), s), ((21, 8), s), ((21, 9), s), ((21, 10), s), ((21, 11), s)]
 
-
+-- TODO add a row for double aces (12)
+softHandBasicStrategy :: Array (Int, Int) Move
 softHandBasicStrategy = array ((13, 2), (21, 11)) [
                           ((13, 2), h), ((13, 3), h), ((13, 4), h), ((13, 5), dh), ((13, 6), dh), ((13, 7), h), ((13, 8), h), ((13, 9), h), ((13, 10), h), ((13, 11), h), 
                           ((14, 2), h), ((14, 3), h), ((14, 4), h), ((14, 5), dh), ((14, 6), dh), ((14, 7), h), ((14, 8), h), ((14, 9), h), ((14, 10), h), ((14, 11), h), 
@@ -233,7 +258,8 @@ softHandBasicStrategy = array ((13, 2), (21, 11)) [
                           ((20, 2), s), ((20, 3), s), ((20, 4), s), ((20, 5), s), ((20, 6), s), ((20, 7), s), ((20, 8), s), ((20, 9), s), ((20, 10), s), ((20, 11), s), 
                           ((21, 2), s), ((21, 3), s), ((21, 4), s), ((21, 5), s), ((21, 6), s), ((21, 7), s), ((21, 8), s), ((21, 9), s), ((21, 10), s), ((21, 11), s)]
 
-splitHandBasicStrategy = array ((2, 11), (2, 11)) [
+splitHandBasicStrategy :: Array (Int, Int) Move
+splitHandBasicStrategy = array ((2, 2), (11, 11)) [
                           ((2, 2), p), ((2, 3), p), ((2, 4), p), ((2, 5), p), ((2, 6), p), ((2, 7), p), ((2, 8), h), ((2, 9), h), ((2, 10), h), ((2, 11), h), 
                           ((3, 2), p), ((3, 3), p), ((3, 4), p), ((3, 5), p), ((3, 6), p), ((3, 7), p), ((3, 8), h), ((3, 9), h), ((3, 10), h), ((3, 11), h), 
                           ((4, 2), h), ((4, 3), h), ((4, 4), h), ((4, 5), p), ((4, 6), p), ((4, 7), h), ((4, 8), h), ((4, 9), h), ((4, 10), h), ((4, 11), h), 
@@ -244,24 +270,6 @@ splitHandBasicStrategy = array ((2, 11), (2, 11)) [
                           ((9, 2), p), ((9, 3), p), ((9, 4), p), ((9, 5), p), ((9, 6), p), ((9, 7), p), ((9, 8), s), ((9, 9), p), ((9, 10), s), ((9, 11), s), 
                           ((10, 2), s), ((10, 3), s), ((10, 4), s), ((10, 5), s), ((10, 6), s), ((10, 7), s), ((10, 8), s), ((10, 9), s), ((10, 10), s), ((10, 11), s), 
                           ((11, 2), p), ((11, 3), p), ((11, 4), p), ((11, 5), p), ((11, 6), p), ((11, 7), p), ((11, 8), p), ((11, 9), p), ((11, 10), p), ((11, 11), p)] 
-
-playBasicStrategy :: Card -> Status -> Either String (State (StdGen, Rational) [Status])
-playBasicStrategy _ s@( Bust _ ) = Right $ state (\(gen, stake) -> ([s], (gen, stake))
-playBasicStrategy _ s@( BlackJack _ ) = Right $ state (\(gen, stake) -> ([s], (gen, stake)) 
-playBasicStrategy _ s@( Surrender _ ) = Right $ state (\(gen, stake) -> ([s], (gen, stake))
-playBasicStrategy _ s@( Stand _ ) = Right $ state (\(gen, stake) -> ([s], (gen, stake)) 
-playBasicStrategy upCard s@( Doubled (Bet (h, a))) = lookupBasicStrategy h upCard $ s >>= (\state -> state >>= 
-playBasicStrategy upCard s@( Continue (Bet (h, a))) = lookupBasicStrategy h upCard $ s >>= (\state -> state >>= 
-playBasicStrategy upCard s@( Start (Bet (h, a)))  = if isPair h
-                                         then lookupSplit h upCard $ s >>= (\state -> state >>= 
-                                         else lookupBasicStrategy h upCard $ s >>= (\state -> state >>= 
-
-playBasicStrategy' :: Card -> [Status] -> Either String (State (StdGen, Rational) [Status])
-playBasicStrategy' upCard xs = foldr f (Right $ state (\(gen, stake) -> ([], (gen, stake)) xs
-                        where f x accEither = playBasicStrategy upCard x >>= 
-                                                (\xState -> accEither >>= (\accState -> return $ 
-                                                  xState >>= (\xList -> accState >>= (\accList -> return $ (xList ++ accList)))))
-                                                                                      
 
 -- Tests
 hand1 = [Ace, Two]
@@ -274,19 +282,29 @@ bet2 = Bet (hand2, 5)
 bet3 = Bet (hand3, 5)
 bet4 = Bet (hand4, 5)
 
-initialStatus1 = Start bet1
-initialStatus2 = Start bet2
-initialStatus3 = Start bet3
-initialStatus4 = Start bet4
+initialStatus1 = [Start bet1]
+initialStatus2 = [Start bet2]
+initialStatus3 = [Start bet3]
+initialStatus4 = [Start bet4]
 
-result1 :: MyStateT StdGen (MyEitherT String []) Status
-result1 = return initialStatus1 >>= surrender
+result1 :: MyStateT (StdGen, Rational) (Either String) [Status]
+result1 = return initialStatus1 >>= unsafeSurrender
+          where unsafeSurrender (c:[]) = surrender c
+                unsafeSurrender _ = undefined
 
-result2 :: MyStateT StdGen (MyEitherT String []) Status
-result2 = return initialStatus2 >>= double >>= stand
+result2 :: MyStateT (StdGen, Rational) (Either String) [Status]
+result2 = return initialStatus2 >>= unsafeDouble >>= unsafeStand
+          where unsafeDouble (c:[]) = double c
+                unsafeDouble _ = undefined
+                unsafeStand (c:[]) = stand c
+                unsafeStand _ = undefined
 
-result3 :: MyStateT StdGen (MyEitherT String []) Status
-result3 = return initialStatus3 >>= hit >>= hit >>= hit
+result3 :: MyStateT (StdGen, Rational) (Either String) [Status]
+result3 = return initialStatus3 >>= unsafeHit >>= unsafeHit >>= unsafeHit
+          where unsafeHit (c:[]) = hit c
+                unsafeHit _ = undefined
 
-result4 :: MyStateT StdGen (MyEitherT String []) Status
-result4 = return initialStatus4 >>= split 
+result4 :: MyStateT (StdGen, Rational) (Either String) [Status]
+result4 = return initialStatus4 >>= unsafeSplit 
+          where unsafeSplit (c:[]) = split c
+                unsafeSplit _ = undefined
