@@ -245,15 +245,23 @@ splitHandBasicStrategy = array ((2, 11), (2, 11)) [
                           ((10, 2), s), ((10, 3), s), ((10, 4), s), ((10, 5), s), ((10, 6), s), ((10, 7), s), ((10, 8), s), ((10, 9), s), ((10, 10), s), ((10, 11), s), 
                           ((11, 2), p), ((11, 3), p), ((11, 4), p), ((11, 5), p), ((11, 6), p), ((11, 7), p), ((11, 8), p), ((11, 9), p), ((11, 10), p), ((11, 11), p)] 
 
-playBasicStrategy :: [Either String Status] -> State (StdGen, Rational) ([Either String Status])
-playBasicStrategy xs = state (\(gen, stake) -> foldr f ([], (gen, stake)) xs
-                        where f x@(Left l) _ = x
-                              f x@(Right status) (played, (gen, balance)) = case status of
-                                                start@(Start (Bet (hand, amount))) = if (isPair hand && (balance - 2 * amount > 0) && (splitHandBasicStrategy (elementOfPair, bankCard) == p)) 
-                                                                                       then let (newHands, state') = split start
-                                                                                                (newPlayedHands, state'') = (runState . playBasicStrategy $ newHands) $ state'
-                                                                                            in played ++ newPlayedHands
-                                                                                       else if 
+playBasicStrategy :: Card -> Status -> Either String (State (StdGen, Rational) [Status])
+playBasicStrategy _ s@( Bust _ ) = Right $ state (\(gen, stake) -> ([s], (gen, stake))
+playBasicStrategy _ s@( BlackJack _ ) = Right $ state (\(gen, stake) -> ([s], (gen, stake)) 
+playBasicStrategy _ s@( Surrender _ ) = Right $ state (\(gen, stake) -> ([s], (gen, stake))
+playBasicStrategy _ s@( Stand _ ) = Right $ state (\(gen, stake) -> ([s], (gen, stake)) 
+playBasicStrategy upCard s@( Doubled (Bet (h, a))) = lookupBasicStrategy h upCard $ s >>= (\state -> state >>= 
+playBasicStrategy upCard s@( Continue (Bet (h, a))) = lookupBasicStrategy h upCard $ s >>= (\state -> state >>= 
+playBasicStrategy upCard s@( Start (Bet (h, a)))  = if isPair h
+                                         then lookupSplit h upCard $ s >>= (\state -> state >>= 
+                                         else lookupBasicStrategy h upCard $ s >>= (\state -> state >>= 
+
+playBasicStrategy' :: Card -> [Status] -> Either String (State (StdGen, Rational) [Status])
+playBasicStrategy' upCard xs = foldr f (Right $ state (\(gen, stake) -> ([], (gen, stake)) xs
+                        where f x accEither = playBasicStrategy upCard x >>= 
+                                                (\xState -> accEither >>= (\accState -> return $ 
+                                                  xState >>= (\xList -> accState >>= (\accList -> return $ (xList ++ accList)))))
+                                                                                      
 
 -- Tests
 hand1 = [Ace, Two]
