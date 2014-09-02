@@ -138,14 +138,16 @@ drawCard :: StdGen -> (Card, StdGen)
 drawCard gen = (deck !! randomInt, gen')
                     where (randomInt, gen') = randomR (0, (length deck) - 1) gen
 
-surrender :: Move
-surrender (Start (Bet (_, a))) = surrender' a
-surrender (StartSplit (Bet (_, a))) = surrender' a
-surrender (StartNoSplit (Bet (_, a))) = surrender' a
-surrender status = MyStateT (\(gen, balance, nbSplit) -> Left ("Error : cannot surrender after " ++ show status ++ "!"))
+drawHand :: StdGen -> (Hand, StdGen)
+drawHand gen = let (c1, gen') = drawCard gen
+                   (c2, gen'') = drawCard gen'
+               in ([c1, c2], gen'')
 
-surrender' :: Amount -> MyStateT (StdGen, Amount, NumberOfSplits) (Either String) [Status]
-surrender' a = MyStateT (\(gen, balance, nbSplit) -> Right $ ([Surrender $ a / 2], (gen, balance + a / 2, nbSplit)))
+surrender :: Move
+surrender (Start (Bet (_, a))) = return [Surrender a]
+surrender (StartSplit (Bet (_, a))) = return [Surrender a]
+surrender (StartNoSplit (Bet (_, a))) = return [Surrender a]
+surrender status = MyStateT (\(gen, balance, nbSplit) -> Left ("Error : cannot surrender after " ++ show status ++ "!"))
 
 stand :: Move
 stand (Start b) = return [Stand b]
@@ -199,7 +201,11 @@ split' c1 c2 a
                    else Right $ ([StartNoSplit $ Bet ([c1, c2], a)], (gen, balance, nbSplit)))
   | otherwise = MyStateT (\(gen, balance, nbSplit) -> Left ("Error : hand " ++ show [c1, c2] ++ " is not a pair!"))
 
-maxNbSplit = 4
+-- Constants
+
+maxNbSplit = 4 :: Int
+blackJackQuote = 3 / 2 :: Amount
+mustHitSoftSeventeen = True
 
 -- Aliases
 
@@ -231,10 +237,10 @@ playBasicStrategy _ s@(Bust _) = return [s]
 playBasicStrategy _ s@(BlackJack _) = return [s]
 playBasicStrategy _ s@(Surrender _) = return [s]
 playBasicStrategy _ s@(Stand _) = return [s]
-playBasicStrategy upCard s@(Doubled (Bet (h, a))) = regularLookup h upCard s >>= playBasicStrategy' upCard
-playBasicStrategy upCard s@(Continue (Bet (h, a))) = regularLookup h upCard s >>= playBasicStrategy' upCard
-playBasicStrategy upCard s@(StartNoSplit (Bet (h, a))) = regularLookup h upCard s >>= playBasicStrategy' upCard
-playBasicStrategy upCard s@(StartSplit (Bet (h, a))) = startLookup h upCard s >>= playBasicStrategy' upCard
+playBasicStrategy upCard s@(Doubled (Bet (h, _))) = regularLookup h upCard s >>= playBasicStrategy' upCard
+playBasicStrategy upCard s@(Continue (Bet (h, _))) = regularLookup h upCard s >>= playBasicStrategy' upCard
+playBasicStrategy upCard s@(StartNoSplit (Bet (h, _))) = regularLookup h upCard s >>= playBasicStrategy' upCard
+playBasicStrategy upCard s@(StartSplit (Bet (h, _))) = startLookup h upCard s >>= playBasicStrategy' upCard
 playBasicStrategy upCard s@(Start (Bet (h, a)))  = if isBlackJack h
                                                      then return [BlackJack a]
                                                      else startLookup h upCard s >>= playBasicStrategy' upCard
@@ -243,16 +249,35 @@ playBasicStrategy' :: Card -> [Status] -> MyStateT (StdGen, Amount, NumberOfSpli
 playBasicStrategy' upCard xs = foldr f (MyStateT (\(gen, stake, nbSplits) -> Right $ ([], (gen, stake, nbSplits)))) xs
                         where f x acc = playBasicStrategy upCard x >>= (\xList -> acc >>= (\accList -> return (xList ++ accList)))
                                                                                       
+playBank :: Bool -> Hand -> State StdGen Int
+playBank mustHitSoftSeventeen h = if (bestScore h < 16 || mustHitSoftSeventeen && bestScore h == 17 && isSoftHand h)
+                                                    then state (\gen -> let (c, gen') = drawCard gen in (c:h, gen')) >>= playBank mustHitSoftSeventeen
+                                                    else return (bestScore h)
+
 regularLookup :: Hand -> Card -> Move
 regularLookup h c = (if isSoftHand h 
-                     then softHandBasicStrategy 
-                     else hardHandBasicStrategy) ! (bestScore h, maximum . scores $ [c])
+                       then softHandBasicStrategy 
+                       else hardHandBasicStrategy) ! (bestScore h, maximum . scores $ [c])
 
 -- TODO think about the return type because head is unsafe
 startLookup :: Hand -> Card -> Move
 startLookup h c = if isPair h 
                     then splitHandBasicStrategy ! (maximum . scores $ [head h], maximum . scores $ [c])
                     else regularLookup h c 
+
+totalGains :: Int -> [Status] -> Either String Amount
+totalGains bankScore = foldr f (Right 0)
+                        where f s@(Start _) acc = Left ("Cannot compute gains on non-final status : " ++ show s ++ ".")
+                              f s@(StartSplit _) acc = Left ("Cannot compute gains on non-final status : " ++ show s ++ ".")
+                              f s@(StartNoSplit _) acc = Left ("Cannot compute gains on non-final status : " ++ show s ++ ".")
+                              f s@(Doubled _) acc = Left ("Cannot compute gains on non-final status : " ++ show s ++ ".")
+                              f s@(Continue _) acc = Left ("Cannot compute gains on non-final status : " ++ show s ++ ".")
+                              f (Bust _) acc = acc
+                              f (BlackJack a) acc = acc >>= (\totalGains -> return (totalGains + (1 + blackJackQuote) * a))
+                              f (Surrender a) acc = acc >>= (\totalGains -> return (totalGains + a / 2))
+                              f (Stand (Bet (h, a))) acc = acc >>= (\totalGains -> if (bestScore h > bankScore || bankScore > 21) 
+                                                                                       then return (totalGains + 2 * a)
+                                                                                       else acc)
 
 hardHandBasicStrategy  :: Array (Int, Int) Move
 hardHandBasicStrategy = array ((4, 2), (21, 11)) [
@@ -300,6 +325,23 @@ splitHandBasicStrategy = array ((2, 2), (11, 11)) [
                           ((9, 2), p), ((9, 3), p), ((9, 4), p), ((9, 5), p), ((9, 6), p), ((9, 7), p), ((9, 8), s), ((9, 9), p), ((9, 10), s), ((9, 11), s), 
                           ((10, 2), s), ((10, 3), s), ((10, 4), s), ((10, 5), s), ((10, 6), s), ((10, 7), s), ((10, 8), s), ((10, 9), s), ((10, 10), s), ((10, 11), s), 
                           ((11, 2), p), ((11, 3), p), ((11, 4), p), ((11, 5), p), ((11, 6), p), ((11, 7), p), ((11, 8), p), ((11, 9), p), ((11, 10), p), ((11, 11), p)] 
+
+-- Simulation
+
+play1round :: Bool -> Amount -> MyStateT (StdGen, Amount) (Either String) Amount
+play1round mustHitSoftSeventeen stake = MyStateT f 
+  where f (gen, initialBalance) = if (initialBalance - stake < 0) 
+                                    then Left "Not enough money left to play this round!"
+                                    else let (bankHand, gen1) = drawHand gen
+                                             (playerHand, gen2) = drawHand gen1
+                                             upCard = head bankHand
+                                             playerInitialStatus = Start (Bet (playerHand, stake))
+                                         in if (isBlackJack bankHand)
+                                              then Right (-stake, (gen2, initialBalance - stake))
+                                              else (runMyStateT (playBasicStrategy upCard playerInitialStatus) $ (gen2, initialBalance, 0)) >>= ( 
+                                                \(statusList, (gen3, newBalance, _)) -> let (bankScore, gen4) = runState (playBank mustHitSoftSeventeen bankHand) $ gen3
+                                                                                            gains = totalGains bankScore statusList 
+                                                                                        in gains >>= (\g -> Right (g, (gen4, newBalance + g))))
 
 -- Tests
 hand1 = [Ace, Two]
