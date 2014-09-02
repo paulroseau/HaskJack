@@ -20,7 +20,8 @@ type Hand = [Card]
 newtype Bet = Bet (Hand, Rational) deriving (Show)
 
 data Status = Surrender Rational | Bust Rational | BlackJack Rational |
-              Start Bet | Stand Bet | Doubled Bet | Continue Bet 
+              Start Bet | StartNoSplit Bet | StartSplit Bet | 
+              Stand Bet | Doubled Bet | Continue Bet 
               deriving (Show)
 
 
@@ -59,24 +60,24 @@ instance Monad m => Monad (MyStateT s m) where
 ----------------------------------------------------------------------
 
 -----------------------THINKING OUTLOUD-------------------------------
--- Target type : [Either String (State StdGen a)] where a = Status
--- Transformers :
--- MyStateT s m1 a = MyStateT { runMyStateT :: s -> m1 (a, s) }
--- MyEitherT l m2 a = MyEitherT { runMyEitherT :: m2 (Either l a) }
--- Rk : the inner most monad has the outer most constructor, since a transformer
--- modifies the inside of a monad. One should read the transformers from right
--- to left.
--- We shoud have :
---  m1 = MyEitherT String [] , which is of kind * -> * 
--- Thinking that (a, s) will be injected in m1 is not a good
--- vision of things, even though it is actually the case in order to construct
--- the function contained in MyStateT. Actually m1 is transformed by MyStateT, and the
--- resulting monad will be injected a. However, MyEitherT [Either l (x, y)] is
--- indeed a monad of base type (x, y), but since this is transformed by a
--- MyStateT, the y is not to be considered as a part of the underlying type of
--- the monad.
--- Thus the target type is actually :
--- MyStateT StdGen (MyEitherT String []) Status
+  -- Target type : [Either String (State StdGen a)] where a = Status
+  -- Transformers :
+  -- MyStateT s m1 a = MyStateT { runMyStateT :: s -> m1 (a, s) }
+  -- MyEitherT l m2 a = MyEitherT { runMyEitherT :: m2 (Either l a) }
+  -- Rk : the inner most monad has the outer most constructor, since a transformer
+  -- modifies the inside of a monad. One should read the transformers from right
+  -- to left.
+  -- We shoud have :
+  --  m1 = MyEitherT String [] , which is of kind * -> * 
+  -- Thinking that (a, s) will be injected in m1 is not a good
+  -- vision of things, even though it is actually the case in order to construct
+  -- the function contained in MyStateT. Actually m1 is transformed by MyStateT, and the
+  -- resulting monad will be injected a. However, MyEitherT [Either l (x, y)] is
+  -- indeed a monad of base type (x, y), but since this is transformed by a
+  -- MyStateT, the y is not to be considered as a part of the underlying type of
+  -- the monad.
+  -- Thus the target type is actually :
+  -- MyStateT StdGen (MyEitherT String []) Status
 ----------------------------------------------------------------------
 
 -- Card logic
@@ -117,62 +118,88 @@ isPair (c1:c2:[]) = c1 == c2
 isPair _ = False
 
 bestScore :: Hand -> Int
-bestScore cards = case filter (<= 21) $ potentialScores of
-                okScores@(_:_) -> maximum okScores
-                _                    -> minimum potentialScores
-              where potentialScores = scores cards
+bestScore cards = if null okScores 
+                    then maximum okScores
+                    else minimum potentialScores
+                  where potentialScores = scores cards
+                        okScores = filter (<= 21) potentialScores
 
 scores :: Hand -> [Int]
 scores cards = foldr (\vs acc -> vs >>= (\v -> fmap (v+) acc)) [0] (map value cards) 
 
--- Move logic
+-- Idea of tests : isSoftHand => Ace and contraposee
 
-type Move = Status -> MyStateT (StdGen, Rational) (Either String) [Status]
+-- Move logic
+type Amount = Rational
+type NumberOfSplits = Int
+type Move = Status -> MyStateT (StdGen, Amount, NumberOfSplits) (Either String) [Status]
 
 drawCard :: StdGen -> (Card, StdGen)
 drawCard gen = (deck !! randomInt, gen')
                     where (randomInt, gen') = randomR (0, (length deck) - 1) gen
 
 surrender :: Move
-surrender (Start (Bet (_, amount)))  = MyStateT (\(gen, balance) -> Right $ ([Surrender $ amount / 2], (gen, balance + amount / 2)))
-surrender status = MyStateT (\(gen, balance) -> Left ("Error : cannot surrender after " ++ show status ++ "!"))
+surrender (Start (Bet (_, a))) = surrender' a
+surrender (StartSplit (Bet (_, a))) = surrender' a
+surrender (StartNoSplit (Bet (_, a))) = surrender' a
+surrender status = MyStateT (\(gen, balance, nbSplit) -> Left ("Error : cannot surrender after " ++ show status ++ "!"))
+
+surrender' :: Amount -> MyStateT (StdGen, Amount, NumberOfSplits) (Either String) [Status]
+surrender' a = MyStateT (\(gen, balance, nbSplit) -> Right $ ([Surrender $ a / 2], (gen, balance + a / 2, nbSplit)))
 
 stand :: Move
-stand (Start b) = MyStateT (\(gen, balance) -> Right $ ([Stand b], (gen, balance)))
-stand (Doubled b) = MyStateT (\(gen, balance) -> Right $ ([Stand b], (gen, balance)))
-stand (Continue b) = MyStateT (\(gen, balance) -> Right $ ([Stand b], (gen, balance)))
-stand status = MyStateT (\(gen, balance) -> Left ("Error : cannot stand after " ++ show status ++ "!"))
+stand (Start b) = return [Stand b]
+stand (StartSplit b) = return [Stand b]
+stand (StartNoSplit b) = return [Stand b]
+stand (Doubled b) = return [Stand b]
+stand (Continue b) = return [Stand b]
+stand status = MyStateT (\(gen, balance, nbSplit) -> Left ("Error : cannot stand after " ++ show status ++ "!"))
 
 double :: Move
-double (Start (Bet (h, a))) = MyStateT (\(gen, balance) -> 
-                                  if (balance - a >= 0)
-                                    then Right $ ([Doubled $ Bet (h, 2*a)], (gen, balance - a))
-                                    else Right $ ([Continue $ Bet (h, a)], (gen, balance)))
-double status = MyStateT (\(gen, balance) -> Left ("Error : cannot double after " ++ show status ++ "!"))
+double (Start (Bet (h, a))) = double' h a
+double (StartSplit (Bet (h, a))) = double' h a
+double (StartNoSplit (Bet (h, a))) = double' h a
+double status = MyStateT (\(gen, balance, nbSplit) -> Left ("Error : cannot double after " ++ show status ++ "!"))
+
+double' :: Hand -> Amount -> MyStateT (StdGen, Amount, NumberOfSplits) (Either String) [Status]
+double' h a = MyStateT (\(gen, balance, nbSplit) -> 
+                if (balance - a >= 0)
+                  then Right $ ([Doubled $ Bet (h, 2*a)], (gen, balance - a, nbSplit))
+                  else Right $ ([Continue $ Bet (h, a)], (gen, balance, nbSplit)))
 
 hit :: Move
 hit (Doubled b) = drawCardAnd Stand b
 hit (Start b) = drawCardAnd Continue b
+hit (StartSplit b) = drawCardAnd Continue b
+hit (StartNoSplit b) = drawCardAnd Continue b
 hit (Continue b) = drawCardAnd Continue b
-hit status = MyStateT (\(gen, balance) -> Left ("Error : cannot hit after " ++ show status ++ "!"))
+hit status = MyStateT (\(gen, balance, nbSplit) -> Left ("Error : cannot hit after " ++ show status ++ "!"))
 
-drawCardAnd :: (Bet -> Status) -> Bet -> MyStateT (StdGen, Rational) (Either String) [Status]
-drawCardAnd status (Bet (h, a)) = MyStateT (\(gen, balance) -> 
-                                                      let (newCard, gen') = drawCard gen 
-                                                          newHand = newCard:h 
-                                            in Right $ ([if (bestScore newHand > 21) then Bust a else status (Bet (newHand, a))]
-                                                       , (gen', balance))) 
+drawCardAnd :: (Bet -> Status) -> Bet -> MyStateT (StdGen, Amount, NumberOfSplits) (Either String) [Status]
+drawCardAnd status (Bet (h, a)) = MyStateT (\(gen, balance, nbSplit) -> 
+                                    let (newCard, gen') = drawCard gen 
+                                        newHand = newCard:h 
+                                    in Right $ ([if (bestScore newHand > 21) 
+                                                   then Bust a 
+                                                   else status (Bet (newHand, a))]
+                                               , (gen', balance, nbSplit))) 
 
 split :: Move
-split (Start (Bet ((c1:c2:[]), a)))
-  | c1 == c2 = MyStateT (\(gen, balance) -> 
-                                  if (balance - a >= 0)
-                                    then let (newC1, gen') = drawCard gen
-                                             (newC2, gen'') = drawCard gen'
-                                         in Right $ ([Start $ Bet ([c1, newC1], a), Start $ Bet ([c2, newC2], a)], (gen'', balance - a))
-                                    else Right $ ([Continue $ Bet ([c1, c2], a)], (gen, balance)))
-  | otherwise = MyStateT (\(gen, balance) -> Left ("Error : hand " ++ show [c1, c2] ++ " is not a pair!"))
-split status = MyStateT (\(gen, balance) -> Left ("Error : cannot split after " ++ show status ++ "!"))
+split (Start (Bet ((c1:c2:[]), a))) = split' c1 c2 a
+split (StartSplit (Bet ((c1:c2:[]), a))) = split' c1 c2 a
+split status = MyStateT (\(gen, balance, nbSplit) -> Left ("Error : cannot split after " ++ show status ++ "!"))
+
+split' :: Card -> Card -> Amount -> MyStateT (StdGen, Amount, NumberOfSplits) (Either String) [Status]
+split' c1 c2 a 
+  | c1 == c2 = MyStateT (\(gen, balance, nbSplit) -> 
+                 if (balance - a >= 0 && nbSplit < maxNbSplit)
+                   then let (newC1, gen') = drawCard gen
+                            (newC2, gen'') = drawCard gen'
+                        in Right $ ([StartSplit $ Bet ([c1, newC1], a), StartSplit $ Bet ([c2, newC2], a)], (gen'', balance - a, nbSplit + 1))
+                   else Right $ ([StartNoSplit $ Bet ([c1, c2], a)], (gen, balance, nbSplit)))
+  | otherwise = MyStateT (\(gen, balance, nbSplit) -> Left ("Error : hand " ++ show [c1, c2] ++ " is not a pair!"))
+
+maxNbSplit = 4
 
 -- Aliases
 
@@ -199,30 +226,33 @@ rs st = stand st
 
 type Strategy = Array (Int, Card) Move
 
-playBasicStrategy :: Card -> Status -> MyStateT (StdGen, Rational) (Either String) [Status]
+playBasicStrategy :: Card -> Status -> MyStateT (StdGen, Amount, NumberOfSplits) (Either String) [Status]
 playBasicStrategy _ s@(Bust _) = return [s]
 playBasicStrategy _ s@(BlackJack _) = return [s]
 playBasicStrategy _ s@(Surrender _) = return [s]
 playBasicStrategy _ s@(Stand _) = return [s]
-playBasicStrategy upCard s@(Doubled (Bet (h, a))) = lookupSimple h upCard s >>= playBasicStrategy' upCard
-playBasicStrategy upCard s@(Continue (Bet (h, a))) = lookupSimple h upCard s >>= playBasicStrategy' upCard
-playBasicStrategy upCard s@(Start (Bet (h, a)))  = firstMove s >>= playBasicStrategy' upCard
-                                                   where firstMove = if isPair h 
-                                                                       then lookupSplit h upCard
-                                                                       else lookupSimple h upCard 
+playBasicStrategy upCard s@(Doubled (Bet (h, a))) = regularLookup h upCard s >>= playBasicStrategy' upCard
+playBasicStrategy upCard s@(Continue (Bet (h, a))) = regularLookup h upCard s >>= playBasicStrategy' upCard
+playBasicStrategy upCard s@(StartNoSplit (Bet (h, a))) = regularLookup h upCard s >>= playBasicStrategy' upCard
+playBasicStrategy upCard s@(StartSplit (Bet (h, a))) = startLookup h upCard s >>= playBasicStrategy' upCard
+playBasicStrategy upCard s@(Start (Bet (h, a)))  = if isBlackJack h
+                                                     then return [BlackJack a]
+                                                     else startLookup h upCard s >>= playBasicStrategy' upCard
 
-playBasicStrategy' :: Card -> [Status] -> MyStateT (StdGen, Rational) (Either String) [Status]
-playBasicStrategy' upCard xs = foldr f (MyStateT (\(gen, stake) -> Right $ ([], (gen, stake)))) xs
+playBasicStrategy' :: Card -> [Status] -> MyStateT (StdGen, Amount, NumberOfSplits) (Either String) [Status]
+playBasicStrategy' upCard xs = foldr f (MyStateT (\(gen, stake, nbSplits) -> Right $ ([], (gen, stake, nbSplits)))) xs
                         where f x acc = playBasicStrategy upCard x >>= (\xList -> acc >>= (\accList -> return (xList ++ accList)))
                                                                                       
-lookupSimple :: Hand -> Card -> Move
-lookupSimple h c = (if isSoftHand h 
+regularLookup :: Hand -> Card -> Move
+regularLookup h c = (if isSoftHand h 
                      then softHandBasicStrategy 
                      else hardHandBasicStrategy) ! (bestScore h, maximum . scores $ [c])
 
 -- TODO think about the return type because head is unsafe
-lookupSplit :: Hand -> Card -> Move
-lookupSplit h c = splitHandBasicStrategy ! (maximum . scores $ [head h], maximum . scores $ [c])
+startLookup :: Hand -> Card -> Move
+startLookup h c = if isPair h 
+                    then splitHandBasicStrategy ! (maximum . scores $ [head h], maximum . scores $ [c])
+                    else regularLookup h c 
 
 hardHandBasicStrategy  :: Array (Int, Int) Move
 hardHandBasicStrategy = array ((4, 2), (21, 11)) [
@@ -287,24 +317,24 @@ initialStatus2 = [Start bet2]
 initialStatus3 = [Start bet3]
 initialStatus4 = [Start bet4]
 
-result1 :: MyStateT (StdGen, Rational) (Either String) [Status]
+result1 :: MyStateT (StdGen, Amount, NumberOfSplits) (Either String) [Status]
 result1 = return initialStatus1 >>= unsafeSurrender
           where unsafeSurrender (c:[]) = surrender c
                 unsafeSurrender _ = undefined
 
-result2 :: MyStateT (StdGen, Rational) (Either String) [Status]
+result2 :: MyStateT (StdGen, Amount, NumberOfSplits) (Either String) [Status]
 result2 = return initialStatus2 >>= unsafeDouble >>= unsafeStand
           where unsafeDouble (c:[]) = double c
                 unsafeDouble _ = undefined
                 unsafeStand (c:[]) = stand c
                 unsafeStand _ = undefined
 
-result3 :: MyStateT (StdGen, Rational) (Either String) [Status]
+result3 :: MyStateT (StdGen, Amount, NumberOfSplits) (Either String) [Status]
 result3 = return initialStatus3 >>= unsafeHit >>= unsafeHit >>= unsafeHit
           where unsafeHit (c:[]) = hit c
                 unsafeHit _ = undefined
 
-result4 :: MyStateT (StdGen, Rational) (Either String) [Status]
+result4 :: MyStateT (StdGen, Amount, NumberOfSplits) (Either String) [Status]
 result4 = return initialStatus4 >>= unsafeSplit 
           where unsafeSplit (c:[]) = split c
                 unsafeSplit _ = undefined
