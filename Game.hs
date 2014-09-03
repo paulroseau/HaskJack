@@ -50,8 +50,8 @@ double status = MyStateT (\(gen, balance, nbSplit) -> Left ("Error : cannot doub
 
 double' :: Hand -> Amount -> MyStateT (StdGen, Amount, NumberOfSplits) (Either String) [Status]
 double' h a = MyStateT (\(gen, balance, nbSplit) -> 
-                if (balance - a >= 0)
-                  then Right $ ([Doubled $ Bet (h, 2*a)], (gen, balance - a, nbSplit))
+                if (balance - a >= (Amount 0))
+                  then Right $ ([Doubled $ Bet (h, a + a)], (gen, balance - a, nbSplit))
                   else Right $ ([Continue $ Bet (h, a)], (gen, balance, nbSplit)))
 
 hit :: Move
@@ -79,7 +79,7 @@ split status = MyStateT (\(gen, balance, nbSplit) -> Left ("Error : cannot split
 split' :: Card -> Card -> Amount -> MyStateT (StdGen, Amount, NumberOfSplits) (Either String) [Status]
 split' c1 c2 a 
   | c1 == c2 = MyStateT (\(gen, balance, nbSplit) -> 
-                 if (balance - a >= 0 && nbSplit < maxNbSplit)
+                 if (balance - a >= (Amount 0) && nbSplit < maxNbSplit)
                    then let (newC1, gen') = drawCard gen
                             (newC2, gen'') = drawCard gen'
                         in Right $ ([StartSplit $ Bet ([c1, newC1], a), StartSplit $ Bet ([c2, newC2], a)], (gen'', balance - a, nbSplit + 1))

@@ -6,12 +6,12 @@ import Control.Monad.State
 import Game
 import Strategy
 import System.Random (StdGen)
-import Data.Monoid
+import Data.Monoid (mempty)
 
 getGainsEstimate :: Int -> Bool -> Amount -> Amount -> StdGen -> Either String Amount
 getGainsEstimate nbRounds mustHitSoftSeventeen refillAmount chipValue seed = let simulation = simulate nbRounds mustHitSoftSeventeen refillAmount chipValue
                                                                                  cumulatedGains = (runMyStateT . runMyWriterT $ simulation) $ (seed, refillAmount)
-                                                                             in cumulatedGains >>= (\((c, _), (_, _)) -> return (c / (fromIntegral nbRounds)))
+                                                                             in cumulatedGains >>= (\(((Amount c), _), (_, _)) -> return (Amount (c / (fromIntegral nbRounds))))
 
 simulate :: Int -> Bool -> Amount -> Amount -> MyWriterT Amount (MyStateT (StdGen, Amount) (Either String)) Amount
 simulate nbRounds mustHitSoftSeventeen refillAmount chipValue = foldr f (return refillAmount) [1..nbRounds]
@@ -47,15 +47,15 @@ playBank mustHitSoftSeventeen h = if (bestScore h < 16 || mustHitSoftSeventeen &
 
 
 totalGains :: Int -> [Status] -> Either String Amount
-totalGains bankScore = foldr f (Right 0)
+totalGains bankScore = foldr f (Right (Amount 0))
                        where f s@(Start _) acc = Left ("Cannot compute gains on non-final status : " ++ show s ++ ".")
                              f s@(StartSplit _) acc = Left ("Cannot compute gains on non-final status : " ++ show s ++ ".")
                              f s@(StartNoSplit _) acc = Left ("Cannot compute gains on non-final status : " ++ show s ++ ".")
                              f s@(Doubled _) acc = Left ("Cannot compute gains on non-final status : " ++ show s ++ ".")
                              f s@(Continue _) acc = Left ("Cannot compute gains on non-final status : " ++ show s ++ ".")
-                             f (Bust _) acc = acc
-                             f (BlackJack a) acc = acc >>= (\totalGains -> return (totalGains + (1 + blackJackQuote) * a))
-                             f (Surrender a) acc = acc >>= (\totalGains -> return (totalGains + a / 2))
+                             f (Bust a) acc = acc >>= (\totalGains -> return (totalGains - a))
+                             f (BlackJack (Amount a)) acc = acc >>= (\totalGains -> return (totalGains + Amount (blackJackQuote * a)))
+                             f (Surrender (Amount a)) acc = acc >>= (\totalGains -> return (totalGains - Amount (a / 2)))
                              f (Stand (Bet (h, a))) acc = acc >>= (\totalGains -> if (bestScore h > bankScore || bankScore > 21) 
-                                                                                      then return (totalGains + 2 * a)
-                                                                                      else acc)
+                                                                                      then return (totalGains + a)
+                                                                                      else return (totalGains - a))
