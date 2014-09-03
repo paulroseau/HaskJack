@@ -24,9 +24,9 @@ data Status = Surrender Amount | Bust Amount | BlackJack Amount |
               Stand Bet | Doubled Bet | Continue Bet 
               deriving (Show)
 
-newtype Bet = Bet (Hand, Rational) deriving (Show)
+newtype Bet = Bet (Hand, Amount) deriving (Show)
 
-type Amount = Rational
+type Amount = Double
 type NumberOfSplits = Int
 
 surrender :: Move

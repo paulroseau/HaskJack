@@ -2,7 +2,7 @@ module Commons where
 
 -- Constants
 maxNbSplit = 4 :: Int
-blackJackQuote = 3 / 2 :: Rational
+blackJackQuote = 3 / 2 :: Amount
 
 -- Personal Monads
 newtype MyStateT s m a = MyStateT { runMyStateT :: s -> m (a, s) }
@@ -13,7 +13,7 @@ instance Monad m => Monad (MyStateT s m) where
                                   (x s) >>= (\(a, s') -> 
                                             runMyStateT (f a) $ s'))
 
-newtype MyWriterT w m a = MyWriterT { runMyWriterT :: (m a, w) }
+newtype MyWriterT w m a = MyWriterT { runMyWriterT :: m (a, w) }
 
 instance Monad m, Monoid w => Monad (MyWriterT w m) where
   return a = MyWriterT (return a, mempty)

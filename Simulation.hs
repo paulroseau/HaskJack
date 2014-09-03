@@ -7,32 +7,38 @@ import Game
 import Strategy
 import System.Random (StdGen)
 
-simulate :: Int -> Bool -> Amount -> Amount -> MyWriterT (Amount, Int) (MyStateT (StdGen, Amount) (Either String)) Amount
-simulate nbRounds mustHitSoftSeventeen refillAmount stake = foldr f (return refillAmount) [1..nbRounds]
-                                                            where f _ acc = acc >>= (\newBalance -> if newBalance < stake 
-                                                                                                      then refillBalance refillAmount 
-                                                                                                      else play1round mustHitSoftSeventeen stake)
 
-refillBalance :: Amount -> MyWriterT (Amount, Int) (MyStateT (StdGen, Amount) (Either String)) Amount 
+getGainsEstimate :: Int -> Bool -> Amount -> Amount -> StdGen -> Either String Amount
+getGainsEstimate nbRounds mustHitSoftSeventeen refillAmount chipValue seed = let simulation = simulate nbRounds mustHitSoftSeventeen refillAmount chipValue
+                                                                                 cumulatedGains = (runStateT . runWriterT $ simulation) $ (seed, refillAmount)
+                                                                             in cumulatedGains >>= (\c -> return $ (c / nbRounds))
+
+simulate :: Int -> Bool -> Amount -> Amount -> MyWriterT (Amount, Int) (MyStateT (StdGen, Amount) (Either String)) Amount
+simulate nbRounds mustHitSoftSeventeen refillAmount chipValue = foldr f (return refillAmount) [1..nbRounds]
+                                                            where f _ acc = acc >>= (\newBalance -> if newBalance < chipValue 
+                                                                                                      then refillBalance refillAmount 
+                                                                                                      else play1round mustHitSoftSeventeen chipValue)
+
+refillBalance :: Amount -> MyWriterT Amount (MyStateT (StdGen, Amount) (Either String)) Amount 
 refillBalance refillAmount = MyWriterT (MyStateT (\(gen, balance) -> ((refillAmount, mempty), (gen, refillAmount)))
 
 play1round :: Bool -> Amount -> MyWriterT (Amount, Int) (MyStateT (StdGen, Amount) (Either String)) Amount
-play1round mustHitSoftSeventeen stake = MyWriterT (MyStateT f)
-  where f (gen, initialBalance) = if (initialBalance - stake < 0) 
+play1round mustHitSoftSeventeen chipValue = MyWriterT (MyStateT f)
+  where f (gen, initialBalance) = if (initialBalance - chipValue < 0) 
                                     then Left "Not enough money left to play this round!"
                                     else let (bankHand, gen1) = drawHand gen
                                              (playerHand, gen2) = drawHand gen1
                                              upCard = head bankHand
-                                             playerInitialStatus = Start (Bet (playerHand, stake))
+                                             playerInitialStatus = Start (Bet (playerHand, chipValue))
                                          in if (isBlackJack bankHand)
-                                              then let gains = -stake
+                                              then let gains = -chipValue
                                                        newBalance = initialBalance + gains                                                        
-                                                   in Right ((newBalance, (gains, 1)), (gen2, newBalance))
+                                                   in Right ((newBalance, gains), (gen2, newBalance))
                                               else (runMyStateT (playBasicStrategy upCard playerInitialStatus) $ (gen2, initialBalance, 0)) >>= ( 
                                                 \(statusList, (gen3, updatedBalance, _)) -> let (bankScore, gen4) = runState (playBank mustHitSoftSeventeen bankHand) $ gen3
                                                                                                 gains = totalGains bankScore statusList 
                                                                                             in gains >>= (\g -> let newBalance = updatedBalance + g 
-                                                                                                                in Right ((newBalance, (g, 1)), (gen4, newBalance))))
+                                                                                                                in Right ((newBalance, g), (gen4, newBalance))))
                                                                                       
 playBank :: Bool -> Hand -> State StdGen Int
 playBank mustHitSoftSeventeen h = if (bestScore h < 16 || mustHitSoftSeventeen && bestScore h == 17 && isSoftHand h)
