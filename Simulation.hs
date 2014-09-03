@@ -6,23 +6,23 @@ import Control.Monad.State
 import Game
 import Strategy
 import System.Random (StdGen)
-
+import Data.Monoid
 
 getGainsEstimate :: Int -> Bool -> Amount -> Amount -> StdGen -> Either String Amount
 getGainsEstimate nbRounds mustHitSoftSeventeen refillAmount chipValue seed = let simulation = simulate nbRounds mustHitSoftSeventeen refillAmount chipValue
-                                                                                 cumulatedGains = (runStateT . runWriterT $ simulation) $ (seed, refillAmount)
-                                                                             in cumulatedGains >>= (\c -> return $ (c / nbRounds))
+                                                                                 cumulatedGains = (runMyStateT . runMyWriterT $ simulation) $ (seed, refillAmount)
+                                                                             in cumulatedGains >>= (\((c, _), (_, _)) -> return (c / (fromIntegral nbRounds)))
 
-simulate :: Int -> Bool -> Amount -> Amount -> MyWriterT (Amount, Int) (MyStateT (StdGen, Amount) (Either String)) Amount
+simulate :: Int -> Bool -> Amount -> Amount -> MyWriterT Amount (MyStateT (StdGen, Amount) (Either String)) Amount
 simulate nbRounds mustHitSoftSeventeen refillAmount chipValue = foldr f (return refillAmount) [1..nbRounds]
                                                             where f _ acc = acc >>= (\newBalance -> if newBalance < chipValue 
                                                                                                       then refillBalance refillAmount 
                                                                                                       else play1round mustHitSoftSeventeen chipValue)
 
 refillBalance :: Amount -> MyWriterT Amount (MyStateT (StdGen, Amount) (Either String)) Amount 
-refillBalance refillAmount = MyWriterT (MyStateT (\(gen, balance) -> ((refillAmount, mempty), (gen, refillAmount)))
+refillBalance refillAmount = MyWriterT $ MyStateT (\(gen, balance) -> return ((refillAmount, mempty), (gen, refillAmount)))
 
-play1round :: Bool -> Amount -> MyWriterT (Amount, Int) (MyStateT (StdGen, Amount) (Either String)) Amount
+play1round :: Bool -> Amount -> MyWriterT Amount (MyStateT (StdGen, Amount) (Either String)) Amount
 play1round mustHitSoftSeventeen chipValue = MyWriterT (MyStateT f)
   where f (gen, initialBalance) = if (initialBalance - chipValue < 0) 
                                     then Left "Not enough money left to play this round!"

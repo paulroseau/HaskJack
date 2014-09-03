@@ -26,7 +26,6 @@ data Status = Surrender Amount | Bust Amount | BlackJack Amount |
 
 newtype Bet = Bet (Hand, Amount) deriving (Show)
 
-type Amount = Double
 type NumberOfSplits = Int
 
 surrender :: Move
