@@ -15,13 +15,13 @@ playBasicStrategy upCard s@(Doubled (Bet (h, _))) = regularLookup h upCard s >>=
 playBasicStrategy upCard s@(Continue (Bet (h, _))) = regularLookup h upCard s >>= playBasicStrategy' upCard
 playBasicStrategy upCard s@(StartNoSplit (Bet (h, _))) = regularLookup h upCard s >>= playBasicStrategy' upCard
 playBasicStrategy upCard s@(StartSplit (Bet (h, _))) = startLookup h upCard s >>= playBasicStrategy' upCard
-playBasicStrategy upCard s@(Start (Bet (h, a)))  = if isBlackJack h
+playBasicStrategy upCard s@(Start (Bet (h, a))) = if isBlackJack h
                                                      then return [BlackJack a]
                                                      else startLookup h upCard s >>= playBasicStrategy' upCard
 
 playBasicStrategy' :: Card -> [Status] -> MyStateT (StdGen, Amount, NumberOfSplits) (Either String) [Status]
-playBasicStrategy' upCard xs = foldr f (MyStateT (\(gen, balance, nbSplits) -> Right $ ([], (gen, balance, nbSplits)))) xs
-                        where f x acc = playBasicStrategy upCard x >>= (\xList -> acc >>= (\accList -> return (xList ++ accList)))
+playBasicStrategy' upCard xs = foldr f (return []) xs
+                               where f x acc = playBasicStrategy upCard x >>= (\xList -> acc >>= (\accList -> return (xList ++ accList)))
                                                                                       
 regularLookup :: Hand -> Card -> Move
 regularLookup h c = (if isSoftHand h 

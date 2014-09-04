@@ -15,9 +15,9 @@ getGainsEstimate nbRounds mustHitSoftSeventeen refillAmount chipValue seed = let
 
 simulate :: Int -> Bool -> Amount -> Amount -> MyWriterT Amount (MyStateT (StdGen, Amount) (Either String)) Amount
 simulate nbRounds mustHitSoftSeventeen refillAmount chipValue = foldr f (return refillAmount) [1..nbRounds]
-                                                            where f _ acc = acc >>= (\newBalance -> if newBalance < chipValue 
-                                                                                                      then refillBalance refillAmount 
-                                                                                                      else play1round mustHitSoftSeventeen chipValue)
+                                                                where f _ acc = acc >>= (\newBalance -> if newBalance < chipValue 
+                                                                                                          then refillBalance refillAmount 
+                                                                                                          else play1round mustHitSoftSeventeen chipValue)
 
 refillBalance :: Amount -> MyWriterT Amount (MyStateT (StdGen, Amount) (Either String)) Amount 
 refillBalance refillAmount = MyWriterT $ MyStateT (\(gen, balance) -> return ((refillAmount, mempty), (gen, refillAmount)))
